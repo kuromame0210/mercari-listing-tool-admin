@@ -1,0 +1,35 @@
+{
+  "name": "flea-market-research-admin",
+  "version": "2.0.0",
+  "description": "フリマサイトリサーチツール管理画面（Amazon出品対応）",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "@supabase/auth-helpers-nextjs": "^0.8.0",
+    "@supabase/auth-helpers-react": "^0.4.0",
+    "lucide-react": "^0.294.0",
+    "recharts": "^2.8.0",
+    "date-fns": "^2.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.8.0",
+    "@types/react": "18.2.25",
+    "@types/react-dom": "18.2.11",
+    "typescript": "5.2.2",
+    "tailwindcss": "^3.3.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "eslint": "8.51.0",
+    "eslint-config-next": "14.0.0"
+  }
+}
