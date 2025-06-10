@@ -365,7 +365,7 @@ export default function ProductsPage() {
                         {isEditing ? (
                           <select
                             value={editingProduct.amazon_status || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, amazon_status: e.target.value})}
+                            onChange={(e) => setEditingProduct({...editingProduct, amazon_status: e.target.value as 'draft' | 'ready' | 'uploaded' | 'active' | 'error'})}
                             className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                           >
                             <option value="draft">下書き</option>
