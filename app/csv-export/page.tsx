@@ -2,18 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { supabase, TABLE_NAMES, Product } from '../../lib/supabase';
-import { Package, Filter, ExternalLink, Edit, Trash2, Download, FileCheck, FileOutput } from 'lucide-react';
+import { Download, RefreshCw, ArrowLeft, FileX, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 
-export default function ProductsPage() {
+export default function CSVExportPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('exported');
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingProduct, setEditingProduct] = useState<Partial<Product>>({});
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [showHeaders, setShowHeaders] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -33,15 +32,9 @@ export default function ProductsPage() {
         `)
         .order('created_at', { ascending: sortOrder === 'asc' });
 
-      if (filter === 'valid') {
-        query = query.eq('is_filtered', false);
-      } else if (filter === 'filtered') {
-        query = query.eq('is_filtered', true);
-      } else if (filter === 'amazon_ready') {
-        query = query.eq('amazon_status', 'ready');
-      } else if (filter === 'csv_exported') {
+      if (filter === 'exported') {
         query = query.eq('csv_exported', true);
-      } else if (filter === 'csv_not_exported') {
+      } else if (filter === 'not_exported') {
         query = query.eq('csv_exported', false);
       }
 
@@ -70,115 +63,10 @@ export default function ProductsPage() {
   };
 
   const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const formatted = new Intl.DateTimeFormat('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-    
-    // 相対時間も計算
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffHours / 24);
-    
-    let relative = '';
-    if (diffDays > 0) {
-      relative = `${diffDays}日前`;
-    } else if (diffHours > 0) {
-      relative = `${diffHours}時間前`;
-    } else {
-      relative = '1時間以内';
-    }
-    
-    return { formatted, relative };
+    return new Date(dateString).toLocaleString('ja-JP');
   };
 
-  const getStatusBadge = (product: Product) => {
-    if (product.is_filtered) {
-      return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">フィルタ済み</span>;
-    }
-    
-    switch (product.amazon_status) {
-      case 'ready':
-        return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">出品準備完了</span>;
-      case 'active':
-        return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">出品中</span>;
-      case 'uploaded':
-        return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">アップロード済み</span>;
-      default:
-        return <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">下書き</span>;
-    }
-  };
-
-  const startEdit = (product: Product) => {
-    setEditingId(product.id);
-    setEditingProduct({
-      title: product.title,
-      seller_name: product.seller_name,
-      product_condition: product.product_condition,
-      price: product.price,
-      listing_price: product.listing_price,
-      amazon_title: product.amazon_title,
-      amazon_status: product.amazon_status
-    });
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditingProduct({});
-  };
-
-  const saveEdit = async (productId: string) => {
-    try {
-      const { error } = await supabase
-        .from(TABLE_NAMES.PRODUCTS)
-        .update(editingProduct)
-        .eq('id', productId);
-
-      if (error) throw error;
-
-      // 商品リストを更新
-      setProducts(products.map(p => 
-        p.id === productId ? { ...p, ...editingProduct } : p
-      ));
-
-      setEditingId(null);
-      setEditingProduct({});
-    } catch (error) {
-      console.error('商品更新エラー:', error);
-      alert('商品の更新に失敗しました');
-    }
-  };
-
-  const deleteProduct = async (productId: string) => {
-    if (!confirm('この商品を削除しますか？')) {
-      return;
-    }
-
-    try {
-      const { error } = await supabase
-        .from(TABLE_NAMES.PRODUCTS)
-        .delete()
-        .eq('id', productId);
-
-      if (error) throw error;
-
-      setProducts(products.filter(p => p.id !== productId));
-    } catch (error) {
-      console.error('商品削除エラー:', error);
-      alert('商品の削除に失敗しました');
-    }
-  };
-
-  const toggleSortOrder = () => {
-    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-  };
-
-  const markAsCSVExported = async (productIds: string[]) => {
+  const resetCSVStatus = async (productIds: string[]) => {
     if (productIds.length === 0) {
       return;
     }
@@ -187,19 +75,18 @@ export default function ProductsPage() {
       const { error } = await supabase
         .from(TABLE_NAMES.PRODUCTS)
         .update({ 
-          csv_exported: true, 
-          csv_exported_at: new Date().toISOString() 
+          csv_exported: false, 
+          csv_exported_at: null 
         })
         .in('id', productIds);
 
       if (error) throw error;
 
-      // 成功した場合、選択状態をクリアして商品リストを再読み込み
       setSelectedProducts(new Set());
       await loadProducts();
     } catch (error) {
-      console.error('CSV反映ステータス更新エラー:', error);
-      alert('CSV反映ステータスの更新に失敗しました');
+      console.error('CSVステータスリセットエラー:', error);
+      alert('CSVステータスのリセットに失敗しました');
     }
   };
 
@@ -313,35 +200,29 @@ export default function ProductsPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      // CSV出力後、出力した商品のcsv_exportedフラグを更新
-      const productIds = filteredProducts.map(p => p.id);
-      const { error } = await supabase
-        .from(TABLE_NAMES.PRODUCTS)
-        .update({ 
-          csv_exported: true, 
-          csv_exported_at: new Date().toISOString() 
-        })
-        .in('id', productIds);
 
-      if (error) {
-        console.error('CSV出力ステータス更新エラー:', error);
-        alert('CSVファイルは出力されましたが、ステータスの更新に失敗しました');
-      } else {
-        // 成功した場合は商品リストを再読み込み
-        await loadProducts();
-      }
     } catch (error) {
       console.error('CSV出力エラー:', error);
       alert('CSV出力に失敗しました');
     }
   };
 
+  const toggleSortOrder = () => {
+    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+  };
+
   return (
     <div className="p-6">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">商品管理</h1>
-        <p className="text-gray-600">フリマサイトから収集した商品データの表示・編集・Amazon出品準備</p>
+        <div className="flex items-center mb-4">
+          <Link href="/products" className="mr-4">
+            <ArrowLeft className="w-6 h-6 text-gray-600 hover:text-gray-800" />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">CSV出力管理</h1>
+            <p className="text-gray-600">CSV反映済み商品の管理・出力・ステータス変更</p>
+          </div>
+        </div>
       </div>
 
       {/* フィルターとアクション */}
@@ -363,38 +244,28 @@ export default function ProductsPage() {
               onChange={(e) => setFilter(e.target.value)}
               className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-base min-w-[160px]"
             >
+              <option value="exported">CSV反映済み</option>
+              <option value="not_exported">CSV未反映</option>
               <option value="all">すべて</option>
-              <option value="valid">有効商品</option>
-              <option value="filtered">フィルタ済み</option>
-              <option value="amazon_ready">Amazon準備完了</option>
-              <option value="csv_exported">CSV反映済み</option>
-              <option value="csv_not_exported">CSV未反映</option>
             </select>
           </div>
           
           {/* アクションボタン */}
           <div className="flex flex-col sm:flex-row gap-3">
             <button 
-              onClick={() => markAsCSVExported(Array.from(selectedProducts))}
+              onClick={() => resetCSVStatus(Array.from(selectedProducts))}
               disabled={selectedProducts.size === 0}
-              className="flex items-center justify-center px-6 py-4 bg-green-600 text-white text-base font-medium rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
+              className="flex items-center justify-center px-6 py-4 bg-orange-600 text-white text-base font-medium rounded-lg hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation min-w-[200px]"
             >
-              <FileCheck className="w-5 h-5 mr-2" />
-              CSV反映 ({selectedProducts.size})
+              <RefreshCw className="w-5 h-5 mr-2" />
+              CSV反映を解除 ({selectedProducts.size})
             </button>
-            <Link
-              href="/csv-export"
-              className="flex items-center justify-center px-6 py-4 bg-purple-600 text-white text-base font-medium rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
-            >
-              <FileOutput className="w-5 h-5 mr-2" />
-              CSV管理
-            </Link>
             <button 
               onClick={exportToCSV}
               className="flex items-center justify-center px-6 py-4 bg-blue-600 text-white text-base font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
             >
               <Download className="w-5 h-5 mr-2" />
-              CSV出力
+              CSV出力 ({filteredProducts.length}件)
             </button>
           </div>
         </div>
@@ -437,13 +308,10 @@ export default function ProductsPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">画像</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">商品名</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出品者</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状態</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">仕入価格</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出品価格</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利益</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CSV</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">プラットフォーム</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CSV反映日時</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">アクション</th>
                 </tr>
               </thead>
@@ -451,7 +319,6 @@ export default function ProductsPage() {
                 {filteredProducts.map((product) => {
                   const profit = (product.listing_price || 0) - (product.price || 0);
                   const profitRate = product.price ? ((profit / product.price) * 100) : 0;
-                  const isEditing = editingId === product.id;
                   
                   return (
                     <tr key={product.id} className="hover:bg-gray-50">
@@ -469,13 +336,8 @@ export default function ProductsPage() {
                       
                       {/* 作成日時 */}
                       <td className="px-6 py-4">
-                        <div className="text-sm">
-                          <div className="text-gray-900">
-                            {formatDateTime(product.created_at).formatted}
-                          </div>
-                          <div className="text-gray-500 text-xs">
-                            {formatDateTime(product.created_at).relative}
-                          </div>
+                        <div className="text-sm text-gray-900">
+                          {formatDateTime(product.created_at)}
                         </div>
                       </td>
                       
@@ -501,91 +363,30 @@ export default function ProductsPage() {
                       
                       {/* 商品名 */}
                       <td className="px-6 py-4">
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editingProduct.title || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, title: e.target.value})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <div className="text-sm font-medium text-gray-900 truncate max-w-xs">
-                            {product.title || '商品名なし'}
-                          </div>
-                        )}
+                        <div className="text-sm font-medium text-gray-900 truncate max-w-xs">
+                          {product.title || '商品名なし'}
+                        </div>
                       </td>
                       
                       {/* 出品者 */}
                       <td className="px-6 py-4">
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editingProduct.seller_name || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, seller_name: e.target.value})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <div className="text-sm text-gray-500">
-                            {product.seller_name || '不明'}
-                          </div>
-                        )}
-                      </td>
-                      
-                      {/* 状態 */}
-                      <td className="px-6 py-4">
-                        {isEditing ? (
-                          <select
-                            value={editingProduct.product_condition || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, product_condition: e.target.value})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="">選択してください</option>
-                            <option value="新品、未使用">新品、未使用</option>
-                            <option value="未使用に近い">未使用に近い</option>
-                            <option value="目立った傷や汚れなし">目立った傷や汚れなし</option>
-                            <option value="やや傷や汚れあり">やや傷や汚れあり</option>
-                            <option value="傷や汚れあり">傷や汚れあり</option>
-                            <option value="全体的に状態が悪い">全体的に状態が悪い</option>
-                          </select>
-                        ) : (
-                          <div className="text-sm text-gray-500">
-                            {product.product_condition || '不明'}
-                          </div>
-                        )}
+                        <div className="text-sm text-gray-500">
+                          {product.seller_name || '不明'}
+                        </div>
                       </td>
                       
                       {/* 仕入価格 */}
                       <td className="px-6 py-4">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            value={editingProduct.price || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, price: parseInt(e.target.value) || 0})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="0"
-                          />
-                        ) : (
-                          <div className="text-sm text-gray-900">
-                            {formatCurrency(product.price || 0)}
-                          </div>
-                        )}
+                        <div className="text-sm text-gray-900">
+                          {formatCurrency(product.price || 0)}
+                        </div>
                       </td>
                       
                       {/* 出品価格 */}
                       <td className="px-6 py-4">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            value={editingProduct.listing_price || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, listing_price: parseInt(e.target.value) || 0})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="0"
-                          />
-                        ) : (
-                          <div className="text-sm text-green-600">
-                            {formatCurrency(product.listing_price || 0)}
-                          </div>
-                        )}
+                        <div className="text-sm text-green-600">
+                          {formatCurrency(product.listing_price || 0)}
+                        </div>
                       </td>
                       
                       {/* 利益 */}
@@ -596,104 +397,31 @@ export default function ProductsPage() {
                         </div>
                       </td>
                       
-                      {/* ステータス */}
+                      {/* CSV反映日時 */}
                       <td className="px-6 py-4">
-                        {isEditing ? (
-                          <select
-                            value={editingProduct.amazon_status || ''}
-                            onChange={(e) => setEditingProduct({...editingProduct, amazon_status: e.target.value as 'draft' | 'ready' | 'uploaded' | 'active' | 'error'})}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="draft">下書き</option>
-                            <option value="ready">出品準備完了</option>
-                            <option value="uploaded">アップロード済み</option>
-                            <option value="active">出品中</option>
-                          </select>
-                        ) : (
-                          getStatusBadge(product)
-                        )}
-                      </td>
-                      
-                      {/* CSVステータス */}
-                      <td className="px-6 py-4">
-                        {product.csv_exported ? (
-                          <div className="text-center">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              反映済み
-                            </span>
-                            {product.csv_exported_at && (
-                              <div className="text-xs text-gray-500 mt-1">
-                                {new Date(product.csv_exported_at).toLocaleDateString('ja-JP')}
-                              </div>
-                            )}
+                        {product.csv_exported_at ? (
+                          <div className="text-sm text-gray-900">
+                            {formatDateTime(product.csv_exported_at)}
                           </div>
                         ) : (
-                          <button
-                            onClick={() => markAsCSVExported([product.id])}
-                            className="inline-flex items-center px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
-                            title="CSVに反映"
-                          >
-                            <FileCheck className="w-4 h-4 mr-1" />
-                            反映
-                          </button>
+                          <span className="text-sm text-gray-400">未反映</span>
                         )}
-                      </td>
-                      
-                      {/* プラットフォーム */}
-                      <td className="px-6 py-4 text-sm text-gray-900">
-                        {product.platform?.platform_name || 'メルカリ'}
                       </td>
                       
                       {/* アクション */}
                       <td className="px-6 py-4">
                         <div className="flex space-x-1">
-                          {isEditing ? (
-                            <>
-                              <button
-                                onClick={() => saveEdit(product.id)}
-                                className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1"
-                                title="保存"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </button>
-                              <button
-                                onClick={cancelEdit}
-                                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-1"
-                                title="キャンセル"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </>
+                          {product.csv_exported ? (
+                            <button
+                              onClick={() => resetCSVStatus([product.id])}
+                              className="inline-flex items-center px-4 py-3 text-sm font-medium text-orange-700 bg-orange-100 rounded-lg hover:bg-orange-200 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1 transition-all duration-200 shadow-sm hover:shadow-md min-w-[100px] justify-center"
+                              title="CSV反映を解除して未反映に戻す"
+                            >
+                              <RefreshCw className="w-5 h-5 mr-2" />
+                              解除
+                            </button>
                           ) : (
-                            <>
-                              <a
-                                href={product.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-                                title="元のページを開く"
-                              >
-                                <ExternalLink className="w-5 h-5" />
-                              </a>
-                              <button
-                                onClick={() => startEdit(product)}
-                                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-1"
-                                title="編集"
-                              >
-                                <Edit className="w-5 h-5" />
-                              </button>
-                              <button
-                                onClick={() => deleteProduct(product.id)}
-                                className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
-                                title="削除"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </>
+                            <span className="inline-flex items-center px-4 py-3 text-sm text-gray-400 bg-gray-50 rounded-lg min-w-[100px] justify-center">未反映</span>
                           )}
                         </div>
                       </td>
@@ -706,25 +434,102 @@ export default function ProductsPage() {
         )}
       </div>
 
+      {/* Amazonヘッダー情報 */}
+      <div className="mt-6 bg-white rounded-lg shadow p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <Info className="w-5 h-5 text-blue-600 mr-2" />
+            <h3 className="text-lg font-medium text-gray-900">Amazon CSV出力項目</h3>
+          </div>
+          <button
+            onClick={() => setShowHeaders(!showHeaders)}
+            className="flex items-center px-3 py-2 text-sm text-blue-600 hover:text-blue-800 focus:outline-none"
+          >
+            {showHeaders ? (
+              <>
+                <ChevronUp className="w-4 h-4 mr-1" />
+                非表示
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-4 h-4 mr-1" />
+                192項目を表示
+              </>
+            )}
+          </button>
+        </div>
+        
+        {showHeaders && (
+          <div className="bg-gray-50 rounded-lg p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+              {[
+                '商品タイプ', '出品者SKU', 'ブランド名', '商品名', '商品コード(JANコード等)', '商品コードのタイプ', 'メーカー名', '推奨ブラウズノード',
+                'アダルト商品', '在庫数', '商品の販売価格', '商品メイン画像URL', '対象性別', '商品のサブ画像URL1', '商品のサブ画像URL2', '商品のサブ画像URL3',
+                '商品のサブ画像URL4', '商品のサブ画像URL5', '商品のサブ画像URL6', '商品のサブ画像URL7', '商品のサブ画像URL8', 'カラーサンプル画像URL',
+                '親子関係の指定', 'バリエーションテーマ', '親商品のSKU(商品管理番号)', '親子関係のタイプ', 'アップデート・削除', 'メーカー型番',
+                '商品説明文', 'お取り扱い上の注意', 'お取り扱い上の注意', 'お取り扱い上の注意', '対応言語', '型番', '版', '商品の仕様', '商品の仕様',
+                '商品の仕様', '商品の仕様', '商品の仕様', '検索キーワード', 'メーカー推奨最少年齢の単位', 'メーカー推奨最高年齢の単位', '組み立て方法',
+                '要組み立て', '組み立て時間の単位', '組み立て時間', '折りたたみ時のサイズ', '素材の種類', '機能性', '機能性', '機能性', '機能性',
+                '機能性', 'サイズ', 'カラー', 'カラーマップ', '商品の個数（ピース数）', 'エンジンタイプ', '推奨使用用途', 'コレクション名', 'ジャンル',
+                '電池の説明', 'リチウム電池エネルギー含有量', '出品者カタログ番号', 'プラチナキーワード', 'プラチナキーワード', 'プラチナキーワード',
+                'プラチナキーワード', 'プラチナキーワード', 'スタイル名', 'リチウム電池の電圧の測定単位', 'ターゲットユーザーのキーワード',
+                'ターゲットユーザーのキーワード', 'ターゲットユーザーのキーワード', 'ターゲットユーザーのキーワード', 'ターゲットユーザーのキーワード',
+                'shaft_style_type', 'コントローラタイプ', 'メーカー推奨最少年齢', 'メーカー推奨最高年齢', 'キャラクター', '素材構成', 'スケール名',
+                'レールの規格', '有線or無線', 'サポート周波数帯域', '教育目標', '配送重量', '発送重量の単位', 'メーカー推奨最低重量',
+                'メーカー推奨最少体重の単位', 'メーカー推奨最大重量', 'メーカー推奨最大体重の単位', 'メーカー推奨最小身長', '推奨最低身長の単位',
+                'メーカー推奨最大身長', '推奨最高身長の単位', 'サイズマップ', 'ハンドルの高さ', 'ハンドルの高さの単位', 'シートの幅',
+                '座面（椅子）の幅の単位', '商品の高さ', '商品の長さ', '商品の幅', '商品の重量（パッケージを含まない）', '商品の重量の単位',
+                '商品の長さ', '商品の長さの単位', '商品の寸法の単位', 'フルフィルメントセンターID', '商品パッケージの長さ', '商品パッケージの幅',
+                '商品パッケージの高さ', '商品パッケージの重量', '商品パッケージの重量の単位', '商品パッケージの寸法の単位', '法規上の免責条項',
+                '安全性の注意点', 'メーカー保証の説明', '製造国/地域', '原産国/地域', '特徴・用途', '電池付属',
+                'この商品は電池本体ですか？または電池を使用した商品ですか？', '電池の種類、サイズ', '電池の種類、サイズ', '電池の種類、サイズ',
+                '電池の数', '電池の数', '電池の数', '電池当たりのワット時', 'リチウムイオン電池単数', 'リチウムメタル電池単数',
+                'リチウム含有量(グラム)', 'リチウム電池パッケージ', '商品の重量', '商品の重量の単位', '電池の組成', '電池の重量(グラム)',
+                '電池の重量の測定単位', 'リチウム電池のエネルギー量測定単位', 'リチウム電池の重量の測定単位', '適用される危険物関連法令',
+                '適用される危険物関連法令', '適用される危険物関連法令', '適用される危険物関連法令', '適用される危険物関連法令', '国連(UN)番号',
+                '安全データシート(SDS) URL', '商品の体積', '商品の容量の単位', '引火点(°C)', '分類／危険物ラベル(適用されるものをすべて選択)',
+                '分類／危険物ラベル(適用されるものをすべて選択)', '分類／危険物ラベル(適用されるものをすべて選択)', '出荷作業日数', 'コンディション',
+                '商品のコンディション説明', '商品の公開日', '予約商品の販売開始日', '商品の入荷予定日', '使用しない支払い方法', '配送日時指定SKUリスト',
+                'セール価格', 'セール開始日', 'セール終了日', 'パッケージ商品数', 'メーカー希望価格', '付属品総数', 'ギフト包装',
+                'ギフトメッセージ', '最大注文個数', 'メーカー製造中止', '終了日を提案する', '商品タックスコード', '配送パターン',
+                '賞味期限管理商品', '販売形態(並行輸入品)', '開始日を提案する', 'ポイントパーセント', 'セール時ポイントパーセント'
+              ].map((header, index) => (
+                <div key={index} className="p-2 bg-white rounded border text-gray-700 hover:bg-blue-50 transition-colors">
+                  <span className="text-xs text-gray-500 mr-2">{index + 1}.</span>
+                  {header}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <Info className="w-4 h-4 inline mr-1" />
+                このCSVはAmazonセラーセントラルに直接インポート可能な形式です。
+                必須項目は自動で設定され、商品データが適切にマッピングされます。
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 統計情報 */}
       <div className="mt-6 bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">表示中の商品統計</h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="text-center">
             <div className="text-2xl font-bold text-blue-600">{filteredProducts.length}</div>
             <div className="text-sm text-gray-600">表示中</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              {filteredProducts.filter(p => !p.is_filtered).length}
+              {filteredProducts.filter(p => p.csv_exported).length}
             </div>
-            <div className="text-sm text-gray-600">有効商品</div>
+            <div className="text-sm text-gray-600">CSV反映済み</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              {filteredProducts.filter(p => p.amazon_status === 'ready').length}
+              {filteredProducts.filter(p => !p.csv_exported).length}
             </div>
-            <div className="text-sm text-gray-600">Amazon準備完了</div>
+            <div className="text-sm text-gray-600">CSV未反映</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-purple-600">
@@ -733,12 +538,6 @@ export default function ProductsPage() {
               )}
             </div>
             <div className="text-sm text-gray-600">合計予想利益</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-teal-600">
-              {filteredProducts.filter(p => p.csv_exported).length}
-            </div>
-            <div className="text-sm text-gray-600">CSV反映済み</div>
           </div>
         </div>
       </div>

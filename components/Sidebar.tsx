@@ -8,14 +8,18 @@ import {
   DollarSign, 
   Filter,
   Settings,
-  BarChart3
+  BarChart3,
+  UserX,
+  FileText
 } from 'lucide-react';
 
 const navigation = [
   { name: 'ダッシュボード', href: '/', icon: LayoutDashboard },
   { name: '商品一覧', href: '/products', icon: Package },
+  { name: 'CSV出力', href: '/csv-export', icon: FileText },
   { name: '価格表管理', href: '/price-tables', icon: DollarSign },
   { name: 'キーワードフィルター', href: '/filters', icon: Filter },
+  { name: 'NG出品者管理', href: '/ng-sellers', icon: UserX },
   { name: '分析', href: '/analytics', icon: BarChart3 },
   { name: '設定', href: '/settings', icon: Settings },
 ];

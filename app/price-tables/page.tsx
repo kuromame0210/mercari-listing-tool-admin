@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, TABLE_NAMES } from '../../lib/supabase';
-import { Plus, Edit, Trash2, Save, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Save, X, Download, Upload } from 'lucide-react';
 
 interface PriceTable {
   id: string;
@@ -40,6 +40,7 @@ export default function PriceTablesPage() {
   const [editingTable, setEditingTable] = useState<string | null>(null);
   const [newTable, setNewTable] = useState({ table_name: '', description: '' });
   const [showNewTable, setShowNewTable] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -223,6 +224,131 @@ export default function PriceTablesPage() {
     return priceRanges.filter(range => range.price_table_id === tableId);
   };
 
+  // CSV出力機能
+  const exportToCSV = () => {
+    try {
+      const csvContent = [
+        ['価格表名', '最小価格', '最大価格', '固定価格', '利益率', '送料', 'プラットフォーム手数料率'].join(','),
+        ...priceTables.flatMap(table => 
+          getTableRanges(table.id).map(range => [
+            `"${table.name}"`,
+            range.min_price,
+            range.max_price || '',
+            range.fixed_price || '',
+            range.profit_rate || '',
+            range.shipping_cost || '',
+            range.platform_fee_rate || ''
+          ].join(','))
+        )
+      ].join('\n');
+
+      const BOM = '\uFEFF';
+      const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      
+      if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `価格表_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('CSV出力エラー:', error);
+      alert('CSV出力に失敗しました');
+    }
+  };
+
+  // CSVインポート機能
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const lines = text.split('\n').filter(line => line.trim());
+        
+        if (lines.length < 2) {
+          alert('CSVファイルの形式が正しくありません');
+          return;
+        }
+
+        // ヘッダー行をスキップ
+        const dataLines = lines.slice(1);
+        const importData: { [tableName: string]: any[] } = {};
+
+        for (const line of dataLines) {
+          const columns = line.split(',').map(col => col.replace(/"/g, '').trim());
+          if (columns.length < 7) continue;
+
+          const [tableName, minPrice, maxPrice, fixedPrice, profitRate, shippingCost, platformFeeRate] = columns;
+          
+          if (!importData[tableName]) {
+            importData[tableName] = [];
+          }
+
+          importData[tableName].push({
+            min_price: parseInt(minPrice) || 0,
+            max_price: maxPrice ? parseInt(maxPrice) : null,
+            fixed_price: fixedPrice ? parseInt(fixedPrice) : null,
+            profit_rate: profitRate ? parseFloat(profitRate) : null,
+            shipping_cost: shippingCost ? parseInt(shippingCost) : null,
+            platform_fee_rate: platformFeeRate ? parseFloat(platformFeeRate) : null
+          });
+        }
+
+        // 価格表とレンジを作成
+        for (const [tableName, ranges] of Object.entries(importData)) {
+          // 価格表を作成
+          const { data: tableData, error: tableError } = await supabase
+            .from(TABLE_NAMES.PRICE_TABLES)
+            .insert({
+              name: tableName,
+              description: `${tableName}（CSVインポート）`,
+              is_active: true
+            })
+            .select()
+            .single();
+
+          if (tableError) {
+            console.error(`価格表 "${tableName}" の作成エラー:`, tableError);
+            continue;
+          }
+
+          // 価格範囲を追加
+          const rangesWithTableId = ranges.map(range => ({
+            ...range,
+            price_table_id: tableData.id
+          }));
+
+          const { error: rangeError } = await supabase
+            .from(TABLE_NAMES.PRICE_RANGES)
+            .insert(rangesWithTableId);
+
+          if (rangeError) {
+            console.error(`価格範囲の作成エラー:`, rangeError);
+          }
+        }
+
+        alert(`${Object.keys(importData).length}個の価格表をインポートしました`);
+        loadData();
+      } catch (error) {
+        console.error('CSVインポートエラー:', error);
+        alert('CSVインポートに失敗しました');
+      }
+    };
+
+    reader.readAsText(file, 'UTF-8');
+    // ファイル入力をリセット
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -255,14 +381,37 @@ export default function PriceTablesPage() {
       <div className="bg-white rounded-lg shadow p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">価格表管理</h2>
-          <button
-            onClick={() => setShowNewTable(true)}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            新しい価格表
-          </button>
+          <div className="flex space-x-3">
+            <button
+              onClick={exportToCSV}
+              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              CSV出力
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              CSVインポート
+            </button>
+            <button
+              onClick={() => setShowNewTable(true)}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              新しい価格表
+            </button>
+          </div>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv"
+          onChange={handleFileImport}
+          className="hidden"
+        />
 
         {showNewTable && (
           <div className="border rounded-lg p-4 mb-4 bg-blue-50">

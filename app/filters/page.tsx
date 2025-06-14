@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase, TABLE_NAMES, KeywordFilter, Platform } from '../../lib/supabase';
+import { Download, Upload, FileText } from 'lucide-react';
 
 export default function FiltersPage() {
   const [filters, setFilters] = useState<KeywordFilter[]>([]);
@@ -10,6 +11,7 @@ export default function FiltersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingFilter, setEditingFilter] = useState<KeywordFilter | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState({
     keyword: '',
@@ -143,6 +145,111 @@ export default function FiltersPage() {
     setError(null);
   };
 
+  // CSV出力機能
+  const exportToCSV = () => {
+    try {
+      const csvContent = [
+        ['キーワード', 'プラットフォーム', 'フィルタータイプ', '有効/無効'].join(','),
+        ...filters.map(filter => [
+          `"${filter.keyword}"`,
+          `"${filter.platform?.platform_name || ''}"`,
+          filter.filter_type === 'exclude' ? '除外' : '抽出',
+          filter.is_active ? '有効' : '無効'
+        ].join(','))
+      ].join('\n');
+
+      const BOM = '\uFEFF';
+      const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      
+      if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `キーワードフィルター_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('CSV出力エラー:', error);
+      alert('CSV出力に失敗しました');
+    }
+  };
+
+  // CSVインポート機能
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const lines = text.split('\n').filter(line => line.trim());
+        
+        if (lines.length < 2) {
+          alert('CSVファイルの形式が正しくありません');
+          return;
+        }
+
+        // ヘッダー行をスキップ
+        const dataLines = lines.slice(1);
+        const importData: Array<{
+          keyword: string;
+          platform_id: string;
+          filter_type: 'exclude' | 'include';
+          is_active: boolean;
+        }> = [];
+
+        for (const line of dataLines) {
+          const columns = line.split(',').map(col => col.replace(/"/g, '').trim());
+          if (columns.length < 4) continue;
+
+          const [keyword, platformName, filterType, activeStatus] = columns;
+          
+          // プラットフォーム名からIDを取得
+          const platform = platforms.find(p => p.platform_name === platformName);
+          if (!platform) {
+            console.warn(`プラットフォーム "${platformName}" が見つかりません`);
+            continue;
+          }
+
+          importData.push({
+            keyword,
+            platform_id: platform.id,
+            filter_type: filterType === '抽出' ? 'include' : 'exclude',
+            is_active: activeStatus === '有効'
+          });
+        }
+
+        if (importData.length === 0) {
+          alert('インポートできるデータがありませんでした');
+          return;
+        }
+
+        // データベースに一括挿入
+        const { error } = await supabase
+          .from(TABLE_NAMES.KEYWORD_FILTERS)
+          .insert(importData);
+
+        if (error) throw error;
+
+        alert(`${importData.length}件のキーワードフィルターをインポートしました`);
+        loadData();
+      } catch (error) {
+        console.error('CSVインポートエラー:', error);
+        alert('CSVインポートに失敗しました');
+      }
+    };
+
+    reader.readAsText(file, 'UTF-8');
+    // ファイル入力をリセット
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -166,15 +273,38 @@ export default function FiltersPage() {
 
       <div className="bg-white rounded-lg shadow">
         <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-medium text-gray-900">フィルター管理</h3>
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
-              新規追加
-            </button>
+            <div className="flex space-x-3">
+              <button
+                onClick={exportToCSV}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                CSV出力
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                CSVインポート
+              </button>
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                新規追加
+              </button>
+            </div>
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleFileImport}
+            className="hidden"
+          />
           <p className="text-gray-600 mt-1">
             「ジャンク」「破損」などの除外キーワード設定
           </p>
