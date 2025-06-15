@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://demo.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'demo-key';
+
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  console.warn('⚠️  Supabase環境変数が設定されていません。デモモードで動作します。');
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -38,7 +42,7 @@ export interface Product {
   seller_code?: string;
   product_condition?: string;
   description?: string;
-  images?: any;
+  images?: string[];
   checkout_status?: string;
   listing_price?: number;
   is_filtered: boolean;
@@ -98,6 +102,10 @@ export interface Product {
   amazon_last_uploaded_at?: string;
   amazon_profit_margin?: number;
   amazon_roi?: number;
+  
+  // CSV出力関連フィールド
+  csv_exported?: boolean;
+  csv_exported_at?: string;
   
   created_at: string;
   updated_at: string;

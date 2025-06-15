@@ -30,6 +30,20 @@ export default function Dashboard() {
     try {
       console.log('📊 統計データ取得開始...');
       
+      // デモモードの場合は固定値を返す
+      if (typeof window !== 'undefined' && (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)) {
+        console.log('デモモードで統計データを設定');
+        setStats({
+          total: 1234,
+          valid: 987,
+          filtered: 247,
+          avgProfit: 1500,
+          amazonReady: 156,
+          amazonActive: 89,
+        });
+        return;
+      }
+      
       // 総商品数
       const { count: total } = await supabase
         .from(TABLE_NAMES.PRODUCTS)
@@ -101,6 +115,17 @@ export default function Dashboard() {
   async function loadAmazonStats() {
     try {
       console.log('📈 Amazon統計データ取得開始...');
+      
+      // デモモードの場合は固定値を返す
+      if (typeof window !== 'undefined' && (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)) {
+        console.log('デモモードでAmazon統計データを設定');
+        setAmazonStats([
+          { status: 'draft', count: 45 },
+          { status: 'ready', count: 23 }
+        ]);
+        return;
+      }
+      
       const { data, error } = await supabase
         .from('amazon_listing_status')
         .select('*');
@@ -122,6 +147,61 @@ export default function Dashboard() {
   async function loadRecentProducts() {
     try {
       console.log('🛍️ 商品データ取得開始...');
+      
+      // デモモードの場合は固定値を返す
+      if (typeof window !== 'undefined' && (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)) {
+        console.log('デモモードで商品データを設定');
+        const demoProducts: Product[] = [
+          {
+            id: '1',
+            platform_id: 'demo-platform',
+            url: 'https://demo.example.com/1',
+            title: 'iPhone 14 Pro Max 256GB',
+            seller_name: 'demo_seller_001',
+            price: 120000,
+            listing_price: 135000,
+            is_filtered: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            platform: { 
+              id: 'demo-platform',
+              platform_name: 'メルカリ', 
+              platform_code: 'mercari',
+              base_url: 'https://mercari.com',
+              is_active: true,
+              platform_fee_rate: 0.1,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }
+          },
+          {
+            id: '2',
+            platform_id: 'demo-platform',
+            url: 'https://demo.example.com/2',
+            title: 'MacBook Air M2',
+            seller_name: 'demo_seller_002',
+            price: 98000,
+            listing_price: 115000,
+            is_filtered: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            platform: { 
+              id: 'demo-platform',
+              platform_name: 'メルカリ', 
+              platform_code: 'mercari',
+              base_url: 'https://mercari.com',
+              is_active: true,
+              platform_fee_rate: 0.1,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }
+          }
+        ];
+        setProducts(demoProducts);
+        setLoading(false);
+        return;
+      }
+      
       const { data, error } = await supabase
         .from(TABLE_NAMES.PRODUCTS)
         .select(`
