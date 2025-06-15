@@ -18,7 +18,34 @@ export default function ProductsPage() {
 
   useEffect(() => {
     loadNGKeywords();
+    // デバッグ: Budweiserが存在するかデータベースを直接チェック
+    checkBudweiserInDB();
   }, []);
+
+  async function checkBudweiserInDB() {
+    try {
+      console.log('🔍 データベースでBudweiser直接検索...');
+      
+      // flea_market_research_ng_keywordsテーブルをチェック
+      const { data: ngData, error: ngError } = await supabase
+        .from(TABLE_NAMES.NG_KEYWORDS)
+        .select('keyword')
+        .ilike('keyword', '%budweiser%');
+      
+      console.log('📋 ng_keywordsテーブルのBudweiser検索結果:', ngData, ngError);
+      
+      // keyword_filtersテーブルもチェック
+      const { data: filterData, error: filterError } = await supabase
+        .from(TABLE_NAMES.KEYWORD_FILTERS)
+        .select('keyword, filter_type, is_active')
+        .ilike('keyword', '%budweiser%');
+      
+      console.log('📋 keyword_filtersテーブルのBudweiser検索結果:', filterData, filterError);
+      
+    } catch (error) {
+      console.error('データベース直接検索エラー:', error);
+    }
+  }
 
   useEffect(() => {
     loadProducts();
@@ -27,17 +54,46 @@ export default function ProductsPage() {
   async function loadNGKeywords() {
     try {
       console.log('🔄 NGキーワード読み込み開始...');
-      const { data, error } = await supabase
-        .from('ng_keywords')
-        .select('keyword');
-
-      if (error) throw error;
       
-      const keywords = data?.map(item => item.keyword) || [];
+      // 両方のテーブルから取得して統合
+      const keywordSet = new Set<string>();
+      
+      // 1. flea_market_research_ng_keywordsテーブルから取得
+      const ngResult = await supabase
+        .from(TABLE_NAMES.NG_KEYWORDS)
+        .select('keyword');
+      
+      if (!ngResult.error && ngResult.data) {
+        ngResult.data.forEach(item => keywordSet.add(item.keyword));
+        console.log('📋 ng_keywordsテーブルから取得:', ngResult.data.length, '件');
+      } else {
+        console.warn('ng_keywordsテーブル読み込みエラー:', ngResult.error);
+      }
+      
+      // 2. keyword_filtersテーブルからも取得
+      const filterResult = await supabase
+        .from(TABLE_NAMES.KEYWORD_FILTERS)
+        .select('keyword')
+        .eq('filter_type', 'exclude')
+        .eq('is_active', true);
+      
+      if (!filterResult.error && filterResult.data) {
+        filterResult.data.forEach(item => keywordSet.add(item.keyword));
+        console.log('📋 keyword_filtersテーブルから取得:', filterResult.data.length, '件');
+      } else {
+        console.warn('keyword_filtersテーブル読み込みエラー:', filterResult.error);
+      }
+      
+      // 3. 統合されたキーワードリストを設定
+      const keywords = Array.from(keywordSet);
       setNgKeywords(keywords);
       
-      console.log('✅ NGキーワード読み込み完了:', keywords.length, '件');
+      console.log('✅ 統合NGキーワード読み込み完了:', keywords.length, '件');
       console.log('🔍 Budweiser確認:', keywords.filter(k => k.toLowerCase().includes('budweiser')));
+      
+      // デバッグ: 最初の10件のキーワードを表示
+      console.log('📋 統合NGキーワード一覧（最初10件）:', keywords.slice(0, 10));
+      
     } catch (error) {
       console.error('NGキーワード取得エラー:', error);
     }

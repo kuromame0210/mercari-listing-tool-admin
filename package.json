@@ -1,6 +1,6 @@
 {
   "name": "flea-market-research-admin",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "フリマサイトリサーチツール管理画面（Amazon出品対応）",
   "private": true,
   "scripts": {

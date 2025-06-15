@@ -17,6 +17,8 @@ export const TABLE_NAMES = {
   PRICE_TABLES: 'flea_market_research_price_tables',
   PRICE_RANGES: 'flea_market_research_price_ranges',
   AMAZON_CATEGORIES: 'flea_market_research_amazon_categories',
+  NG_KEYWORDS: 'flea_market_research_ng_keywords',
+  NG_SELLERS: 'flea_market_research_ng_sellers',
 } as const;
 
 // 型定義
