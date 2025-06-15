@@ -2,22 +2,54 @@
 
 import { useEffect, useState } from 'react';
 import { supabase, TABLE_NAMES, Product } from '../../lib/supabase';
-import { Package, Filter, ExternalLink, Edit, Trash2, Download, FileCheck, FileOutput } from 'lucide-react';
+import { Package, Filter, ExternalLink, Edit, Trash2, Download, FileCheck, FileOutput, X } from 'lucide-react';
 import Link from 'next/link';
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('valid');
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<Partial<Product>>({});
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+  const [ngKeywords, setNgKeywords] = useState<string[]>([]);
 
   useEffect(() => {
     loadProducts();
+    loadNGKeywords();
   }, [filter, sortOrder]);
+
+  async function loadNGKeywords() {
+    try {
+      const { data, error } = await supabase
+        .from('ng_keywords')
+        .select('keyword');
+
+      if (error) throw error;
+      setNgKeywords(data?.map(item => item.keyword.toLowerCase()) || []);
+    } catch (error) {
+      console.error('NGキーワード取得エラー:', error);
+    }
+  }
+
+  // NGワードチェック関数
+  function checkForNGKeywords(title: string, description: string): { isNG: boolean; matchedKeywords: string[] } {
+    const searchText = `${title || ''} ${description || ''}`.toLowerCase();
+    const matchedKeywords: string[] = [];
+
+    for (const keyword of ngKeywords) {
+      if (searchText.includes(keyword)) {
+        matchedKeywords.push(keyword);
+      }
+    }
+
+    return {
+      isNG: matchedKeywords.length > 0,
+      matchedKeywords
+    };
+  }
 
   async function loadProducts() {
     try {
@@ -37,6 +69,9 @@ export default function ProductsPage() {
         query = query.eq('is_filtered', false);
       } else if (filter === 'filtered') {
         query = query.eq('is_filtered', true);
+      } else if (filter === 'ng_sellers') {
+        // NG出品者の商品のみ表示（クエリはすべて取得して後でフィルタ）
+        // 後でngSellerCodesでフィルタリングする
       } else if (filter === 'amazon_ready') {
         query = query.eq('amazon_status', 'ready');
       } else if (filter === 'csv_exported') {
@@ -60,6 +95,53 @@ export default function ProductsPage() {
     product.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.seller_name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // NG出品者IDを取得（フィルタ済み商品の出品者ID）
+  const ngSellerCodes = new Set(
+    products
+      .filter(p => p.is_filtered === true && p.seller_code)
+      .map(p => p.seller_code)
+  );
+
+  // 表示用商品リスト
+  const displayProducts = (() => {
+    switch (filter) {
+      case 'valid':
+        // 有効商品（フィルタ済みもNG出品者も除外）
+        return filteredProducts.filter(product => 
+          !product.is_filtered && 
+          (!product.seller_code || !ngSellerCodes.has(product.seller_code))
+        );
+      case 'ng_sellers':
+        // NG出品者の商品のみ（フィルタ済みでない商品）
+        return filteredProducts.filter(product => 
+          !product.is_filtered && 
+          product.seller_code && 
+          ngSellerCodes.has(product.seller_code)
+        );
+      default:
+        return filteredProducts;
+    }
+  })();
+
+  // フィルタ済み商品またはNG出品者商品、NGワード商品のチェック
+  const hasFilteredProducts = Array.from(selectedProducts).some(productId => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return false;
+    
+    // 既存のフィルタチェック
+    if (product.is_filtered === true) return true;
+    if (product.seller_code && ngSellerCodes.has(product.seller_code)) return true;
+    
+    // NGワードチェック
+    const ngCheck = checkForNGKeywords(product.title || '', product.description || '');
+    if (ngCheck.isNG) {
+      console.log(`商品 "${product.title}" でNGワード検出: ${ngCheck.matchedKeywords.join(', ')}`);
+      return true;
+    }
+    
+    return false;
+  });
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('ja-JP', {
@@ -155,10 +237,6 @@ export default function ProductsPage() {
   };
 
   const deleteProduct = async (productId: string) => {
-    if (!confirm('この商品を削除しますか？')) {
-      return;
-    }
-
     try {
       const { error } = await supabase
         .from(TABLE_NAMES.PRODUCTS)
@@ -171,6 +249,27 @@ export default function ProductsPage() {
     } catch (error) {
       console.error('商品削除エラー:', error);
       alert('商品の削除に失敗しました');
+    }
+  };
+
+  const bulkDeleteProducts = async () => {
+    if (selectedProducts.size === 0) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from(TABLE_NAMES.PRODUCTS)
+        .delete()
+        .in('id', Array.from(selectedProducts));
+
+      if (error) throw error;
+
+      setProducts(products.filter(p => !selectedProducts.has(p.id)));
+      setSelectedProducts(new Set());
+    } catch (error) {
+      console.error('一括削除エラー:', error);
+      alert('商品の一括削除に失敗しました');
     }
   };
 
@@ -214,26 +313,55 @@ export default function ProductsPage() {
   };
 
   const toggleAllSelection = () => {
-    if (selectedProducts.size === filteredProducts.length) {
+    if (selectedProducts.size === displayProducts.length) {
       setSelectedProducts(new Set());
     } else {
-      setSelectedProducts(new Set(filteredProducts.map(p => p.id)));
+      setSelectedProducts(new Set(displayProducts.map(p => p.id)));
     }
+  };
+
+  // 無効な文字を除去する関数
+  const sanitizeText = (text: string): string => {
+    if (!text) return '';
+    return text
+      // 制御文字を除去
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+      // ダブルクオートをエスケープ
+      .replace(/"/g, '""')
+      // 改行をスペースに変換
+      .replace(/[\r\n]/g, ' ')
+      // 連続するスペースを一つに
+      .replace(/\s+/g, ' ')
+      .trim();
   };
 
   const exportToCSV = async () => {
     try {
       // Amazonテンプレートのメタデータ行（1行目）
-      const templateMetadata = 'TemplateType=fptcustom,Version=2021.1014,TemplateSignature=SE9CQklFUw==,settings=contentLanguageTag=ja_JP&feedType=113&headerLanguageTag=ja_JP&metadataVersion=MatprodVkxBUHJvZC0xMTQy&primaryMarketplaceId=amzn1.mp.o.A1VC38T7YXB528&templateIdentifier=cca55ff5-5779-45c9-9542-d673ea3c913a&timestamp=2021-10-14T02%3A37%3A46.123Z,上3行はAmazon.comのみで使用します。上3行は変更または削除しないでください。,,,,,,,,,画像,,,,,,,,,バリエーション,,,,商品基本情報,,,,,,,,,商品検索情報,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,推奨ブラウズノード別の情報,,,,,,,,,寸法,,,,,,,,,,,,,,,,,,,,,,,出荷関連情報,,,,,,,コンプライアンス情報,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,出品情報,,,,,,,,,,,,,,,,,,,,,,,,,'
+      const templateMetadata = 'TemplateType=fptcustom\tVersion=2021.1014\tTemplateSignature=SE9CQklFUw==\tsettings=contentLanguageTag=ja_JP&feedType=113&headerLanguageTag=ja_JP&metadataVersion=MatprodVkxBUHJvZC0xMTQy&primaryMarketplaceId=amzn1.mp.o.A1VC38T7YXB528&templateIdentifier=cca55ff5-5779-45c9-9542-d673ea3c913a&timestamp=2021-10-14T02%3A37%3A46.123Z\t上3行はAmazon.comのみで使用します。上3行は変更または削除しないでください。\t\t\t\t\t\t\t\t\t画像\t\t\t\t\t\t\t\t\tバリエーション\t\t\t\t商品基本情報\t\t\t\t\t\t\t\t\t商品検索情報\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t推奨ブラウズノード別の情報\t\t\t\t\t\t\t\t\t寸法\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t出荷関連情報\t\t\t\t\t\t\tコンプライアンス情報\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t出品情報\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t'
 
       // 日本語ヘッダー（2行目）
-      const japaneseHeaders = '商品タイプ,出品者SKU,ブランド名,商品名,商品コード(JANコード等),商品コードのタイプ,メーカー名,推奨ブラウズノード,アダルト商品,在庫数,商品の販売価格,商品メイン画像URL,対象性別,商品のサブ画像URL1,商品のサブ画像URL2,商品のサブ画像URL3,商品のサブ画像URL4,商品のサブ画像URL5,商品のサブ画像URL6,商品のサブ画像URL7,商品のサブ画像URL8,カラーサンプル画像URL,親子関係の指定,バリエーションテーマ,親商品のSKU(商品管理番号),親子関係のタイプ,アップデート・削除,メーカー型番,商品説明文,お取り扱い上の注意,お取り扱い上の注意,お取り扱い上の注意,対応言語,型番,版,商品の仕様,商品の仕様,商品の仕様,商品の仕様,商品の仕様,検索キーワード,メーカー推奨最少年齢の単位,メーカー推奨最高年齢の単位,組み立て方法,要組み立て,組み立て時間の単位,組み立て時間,折りたたみ時のサイズ,素材の種類,機能性,機能性,機能性,機能性,機能性,サイズ,カラー,カラーマップ,商品の個数（ピース数）,エンジンタイプ,推奨使用用途,コレクション名,ジャンル,電池の説明,リチウム電池エネルギー含有量,出品者カタログ番号,プラチナキーワード,プラチナキーワード,プラチナキーワード,プラチナキーワード,プラチナキーワード,スタイル名,リチウム電池の電圧の測定単位,ターゲットユーザーのキーワード,ターゲットユーザーのキーワード,ターゲットユーザーのキーワード,ターゲットユーザーのキーワード,ターゲットユーザーのキーワード,shaft_style_type,コントローラタイプ,メーカー推奨最少年齢,メーカー推奨最高年齢,キャラクター,素材構成,スケール名,レールの規格,有線or無線,サポート周波数帯域,教育目標,配送重量,発送重量の単位,メーカー推奨最低重量,メーカー推奨最少体重の単位,メーカー推奨最大重量,メーカー推奨最大体重の単位,メーカー推奨最小身長,推奨最低身長の単位,メーカー推奨最大身長,推奨最高身長の単位,サイズマップ,ハンドルの高さ,ハンドルの高さの単位,シートの幅,座面（椅子）の幅の単位,商品の高さ,商品の長さ,商品の幅,商品の重量（パッケージを含まない）,商品の重量の単位,商品の長さ,商品の長さの単位,商品の寸法の単位,フルフィルメントセンターID,商品パッケージの長さ,商品パッケージの幅,商品パッケージの高さ,商品パッケージの重量,商品パッケージの重量の単位,商品パッケージの寸法の単位,法規上の免責条項,安全性の注意点,メーカー保証の説明,製造国/地域,原産国/地域,特徴・用途,電池付属,この商品は電池本体ですか？または電池を使用した商品ですか？,電池の種類、サイズ,電池の種類、サイズ,電池の種類、サイズ,電池の数,電池の数,電池の数,電池当たりのワット時,リチウムイオン電池単数,リチウムメタル電池単数,リチウム含有量(グラム),リチウム電池パッケージ,商品の重量,商品の重量の単位,電池の組成,電池の重量(グラム),電池の重量の測定単位,リチウム電池のエネルギー量測定単位,リチウム電池の重量の測定単位,適用される危険物関連法令,適用される危険物関連法令,適用される危険物関連法令,適用される危険物関連法令,適用される危険物関連法令,国連(UN)番号,安全データシート(SDS) URL,商品の体積,商品の容量の単位,引火点(°C),分類／危険物ラベル(適用されるものをすべて選択),分類／危険物ラベル(適用されるものをすべて選択),分類／危険物ラベル(適用されるものをすべて選択),出荷作業日数,コンディション,商品のコンディション説明,商品の公開日,予約商品の販売開始日,商品の入荷予定日,使用しない支払い方法,配送日時指定SKUリスト,セール価格,セール開始日,セール終了日,パッケージ商品数,メーカー希望価格,付属品総数,ギフト包装,ギフトメッセージ,最大注文個数,メーカー製造中止,終了日を提案する,商品タックスコード,配送パターン,賞味期限管理商品,販売形態(並行輸入品),開始日を提案する,ポイントパーセント,セール時ポイントパーセント';
+      const japaneseHeaders = '商品タイプ\t出品者SKU\tブランド名\t商品名\t商品コード(JANコード等)\t商品コードのタイプ\tメーカー名\t推奨ブラウズノード\tアダルト商品\t在庫数\t商品の販売価格\t商品メイン画像URL\t対象性別\t商品のサブ画像URL1\t商品のサブ画像URL2\t商品のサブ画像URL3\t商品のサブ画像URL4\t商品のサブ画像URL5\t商品のサブ画像URL6\t商品のサブ画像URL7\t商品のサブ画像URL8\tカラーサンプル画像URL\t親子関係の指定\tバリエーションテーマ\t親商品のSKU(商品管理番号)\t親子関係のタイプ\tアップデート・削除\tメーカー型番\t商品説明文\tお取り扱い上の注意\tお取り扱い上の注意\tお取り扱い上の注意\t対応言語\t型番\t版\t商品の仕様\t商品の仕様\t商品の仕様\t商品の仕様\t商品の仕様\t検索キーワード\tメーカー推奨最少年齢の単位\tメーカー推奨最高年齢の単位\t組み立て方法\t要組み立て\t組み立て時間の単位\t組み立て時間\t折りたたみ時のサイズ\t素材の種類\t機能性\t機能性\t機能性\t機能性\t機能性\tサイズ\tカラー\tカラーマップ\t商品の個数(ピース数)\tエンジンタイプ\t推奨使用用途\tコレクション名\tジャンル\t電池の説明\tリチウム電池エネルギー含有量\t出品者カタログ番号\tプラチナキーワード\tプラチナキーワード\tプラチナキーワード\tプラチナキーワード\tプラチナキーワード\tスタイル名\tリチウム電池の電圧の測定単位\tターゲットユーザーのキーワード\tターゲットユーザーのキーワード\tターゲットユーザーのキーワード\tターゲットユーザーのキーワード\tターゲットユーザーのキーワード\tshaft_style_type\tコントローラタイプ\tメーカー推奨最少年齢\tメーカー推奨最高年齢\tキャラクター\t素材構成\tスケール名\tレールの規格\t有線or無線\tサポート周波数帯域\t教育目標\t配送重量\t発送重量の単位\tメーカー推奨最低重量\tメーカー推奨最少体重の単位\tメーカー推奨最大重量\tメーカー推奨最大体重の単位\tメーカー推奨最小身長\t推奨最低身長の単位\tメーカー推奨最大身長\t推奨最高身長の単位\tサイズマップ\tハンドルの高さ\tハンドルの高さの単位\tシートの幅\t座面(椅子)の幅の単位\t商品の高さ\t商品の長さ\t商品の幅\t商品の重量(パッケージを含まない)\t商品の重量の単位\t商品の長さ\t商品の長さの単位\t商品の寸法の単位\tフルフィルメントセンターID\t商品パッケージの長さ\t商品パッケージの幅\t商品パッケージの高さ\t商品パッケージの重量\t商品パッケージの重量の単位\t商品パッケージの寸法の単位\t法規上の免責条項\t安全性の注意点\tメーカー保証の説明\t製造国/地域\t原産国/地域\t特徴・用途\t電池付属\tこの商品は電池本体ですか?または電池を使用した商品ですか?\t電池の種類、サイズ\t電池の種類、サイズ\t電池の種類、サイズ\t電池の数\t電池の数\t電池の数\t電池当たりのワット時\tリチウムイオン電池単数\tリチウムメタル電池単数\tリチウム含有量(グラム)\tリチウム電池パッケージ\t商品の重量\t商品の重量の単位\t電池の組成\t電池の重量(グラム)\t電池の重量の測定単位\tリチウム電池のエネルギー量測定単位\tリチウム電池の重量の測定単位\t適用される危険物関連法令\t適用される危険物関連法令\t適用される危険物関連法令\t適用される危険物関連法令\t適用される危険物関連法令\t国連(UN)番号\t安全データシート(SDS) URL\t商品の体積\t商品の容量の単位\t引火点(°C)\t分類/危険物ラベル(適用されるものをすべて選択)\t分類/危険物ラベル(適用されるものをすべて選択)\t分類/危険物ラベル(適用されるものをすべて選択)\t出荷作業日数\tコンディション\t商品のコンディション説明\t商品の公開日\t予約商品の販売開始日\t商品の入荷予定日\t使用しない支払い方法\t配送日時指定SKUリスト\tセール価格\tセール開始日\tセール終了日\tパッケージ商品数\tメーカー希望価格\t付属品総数\tギフト包装\tギフトメッセージ\t最大注文個数\tメーカー製造中止\t終了日を提案する\t商品タックスコード\t配送パターン\t賞味期限管理商品\t販売形態(並行輸入品)\t開始日を提案する\tポイントパーセント\tセール時ポイントパーセント';
 
       // 英語フィールド名（3行目）
-      const englishHeaders = 'feed_product_type,item_sku,brand_name,item_name,external_product_id,external_product_id_type,manufacturer,recommended_browse_nodes,is_adult_product,quantity,standard_price,main_image_url,target_gender,other_image_url1,other_image_url2,other_image_url3,other_image_url4,other_image_url5,other_image_url6,other_image_url7,other_image_url8,swatch_image_url,parent_child,variation_theme,parent_sku,relationship_type,update_delete,part_number,product_description,care_instructions1,care_instructions2,care_instructions3,language_value,model,edition,bullet_point1,bullet_point2,bullet_point3,bullet_point4,bullet_point5,generic_keywords,mfg_minimum_unit_of_measure,mfg_maximum_unit_of_measure,assembly_instructions,is_assembly_required,assembly_time_unit_of_measure,assembly_time,folded_size,material_type,special_features1,special_features2,special_features3,special_features4,special_features5,size_name,color_name,color_map,number_of_pieces,engine_type,recommended_uses_for_product,collection_name,genre,battery_description,lithium_battery_voltage,catalog_number,platinum_keywords1,platinum_keywords2,platinum_keywords3,platinum_keywords4,platinum_keywords5,style_name,lithium_battery_voltage_unit_of_measure,target_audience_keywords1,target_audience_keywords2,target_audience_keywords3,target_audience_keywords4,target_audience_keywords5,shaft_style_type,controller_type,mfg_minimum,mfg_maximum,subject_character,material_composition,scale_name,rail_gauge,remote_control_technology,frequency_bands_supported,educational_objective,website_shipping_weight,website_shipping_weight_unit_of_measure,minimum_weight_recommendation,minimum_weight_recommendation_unit_of_measure,maximum_weight_recommendation,maximum_weight_recommendation_unit_of_measure,minimum_height_recommendation,minimum_height_recommendation_unit_of_measure,maximum_height_recommendation,maximum_height_recommendation_unit_of_measure,size_map,handle_height,handle_height_unit_of_measure,seat_width,seat_width_unit_of_measure,item_height,item_length,item_width,item_display_weight,item_display_weight_unit_of_measure,item_display_length,item_display_length_unit_of_measure,item_dimensions_unit_of_measure,fulfillment_center_id,package_length,package_width,package_height,package_weight,package_weight_unit_of_measure,package_dimensions_unit_of_measure,legal_disclaimer_description,safety_warning,warranty_description,country_string,country_of_origin,specific_uses_for_product,are_batteries_included,batteries_required,battery_type1,battery_type2,battery_type3,number_of_batteries1,number_of_batteries2,number_of_batteries3,lithium_battery_energy_content,number_of_lithium_ion_cells,number_of_lithium_metal_cells,lithium_battery_weight,lithium_battery_packaging,item_weight,item_weight_unit_of_measure,battery_cell_composition,battery_weight,battery_weight_unit_of_measure,lithium_battery_energy_content_unit_of_measure,lithium_battery_weight_unit_of_measure,supplier_declared_dg_hz_regulation1,supplier_declared_dg_hz_regulation2,supplier_declared_dg_hz_regulation3,supplier_declared_dg_hz_regulation4,supplier_declared_dg_hz_regulation5,hazmat_united_nations_regulatory_id,safety_data_sheet_url,item_volume,item_volume_unit_of_measure,flash_point,ghs_classification_class1,ghs_classification_class2,ghs_classification_class3,fulfillment_latency,condition_type,condition_note,product_site_launch_date,merchant_release_date,restock_date,optional_payment_type_exclusion,delivery_schedule_group_id,sale_price,sale_from_date,sale_end_date,item_package_quantity,list_price,number_of_items,offering_can_be_giftwrapped,offering_can_be_gift_messaged,max_order_quantity,is_discontinued_by_manufacturer,offering_end_date,product_tax_code,merchant_shipping_group_name,is_expiration_dated_product,distribution_designation,offering_start_date,standard_price_points_percent,sale_price_points_percent';
+      const englishHeaders = 'feed_product_type\titem_sku\tbrand_name\titem_name\texternal_product_id\texternal_product_id_type\tmanufacturer\trecommended_browse_nodes\tis_adult_product\tquantity\tstandard_price\tmain_image_url\ttarget_gender\tother_image_url1\tother_image_url2\tother_image_url3\tother_image_url4\tother_image_url5\tother_image_url6\tother_image_url7\tother_image_url8\tswatch_image_url\tparent_child\tvariation_theme\tparent_sku\trelationship_type\tupdate_delete\tpart_number\tproduct_description\tcare_instructions1\tcare_instructions2\tcare_instructions3\tlanguage_value\tmodel\tedition\tbullet_point1\tbullet_point2\tbullet_point3\tbullet_point4\tbullet_point5\tgeneric_keywords\tmfg_minimum_unit_of_measure\tmfg_maximum_unit_of_measure\tassembly_instructions\tis_assembly_required\tassembly_time_unit_of_measure\tassembly_time\tfolded_size\tmaterial_type\tspecial_features1\tspecial_features2\tspecial_features3\tspecial_features4\tspecial_features5\tsize_name\tcolor_name\tcolor_map\tnumber_of_pieces\tengine_type\trecommended_uses_for_product\tcollection_name\tgenre\tbattery_description\tlithium_battery_voltage\tcatalog_number\tplatinum_keywords1\tplatinum_keywords2\tplatinum_keywords3\tplatinum_keywords4\tplatinum_keywords5\tstyle_name\tlithium_battery_voltage_unit_of_measure\ttarget_audience_keywords1\ttarget_audience_keywords2\ttarget_audience_keywords3\ttarget_audience_keywords4\ttarget_audience_keywords5\tshaft_style_type\tcontroller_type\tmfg_minimum\tmfg_maximum\tsubject_character\tmaterial_composition\tscale_name\trail_gauge\tremote_control_technology\tfrequency_bands_supported\teducational_objective\twebsite_shipping_weight\twebsite_shipping_weight_unit_of_measure\tminimum_weight_recommendation\tminimum_weight_recommendation_unit_of_measure\tmaximum_weight_recommendation\tmaximum_weight_recommendation_unit_of_measure\tminimum_height_recommendation\tminimum_height_recommendation_unit_of_measure\tmaximum_height_recommendation\tmaximum_height_recommendation_unit_of_measure\tsize_map\thandle_height\thandle_height_unit_of_measure\tseat_width\tseat_width_unit_of_measure\titem_height\titem_length\titem_width\titem_display_weight\titem_display_weight_unit_of_measure\titem_display_length\titem_display_length_unit_of_measure\titem_dimensions_unit_of_measure\tfulfillment_center_id\tpackage_length\tpackage_width\tpackage_height\tpackage_weight\tpackage_weight_unit_of_measure\tpackage_dimensions_unit_of_measure\tlegal_disclaimer_description\tsafety_warning\twarranty_description\tcountry_string\tcountry_of_origin\tspecific_uses_for_product\tare_batteries_included\tbatteries_required\tbattery_type1\tbattery_type2\tbattery_type3\tnumber_of_batteries1\tnumber_of_batteries2\tnumber_of_batteries3\tlithium_battery_energy_content\tnumber_of_lithium_ion_cells\tnumber_of_lithium_metal_cells\tlithium_battery_weight\tlithium_battery_packaging\titem_weight\titem_weight_unit_of_measure\tbattery_cell_composition\tbattery_weight\tbattery_weight_unit_of_measure\tlithium_battery_energy_content_unit_of_measure\tlithium_battery_weight_unit_of_measure\tsupplier_declared_dg_hz_regulation1\tsupplier_declared_dg_hz_regulation2\tsupplier_declared_dg_hz_regulation3\tsupplier_declared_dg_hz_regulation4\tsupplier_declared_dg_hz_regulation5\thazmat_united_nations_regulatory_id\tsafety_data_sheet_url\titem_volume\titem_volume_unit_of_measure\tflash_point\tghs_classification_class1\tghs_classification_class2\tghs_classification_class3\tfulfillment_latency\tcondition_type\tcondition_note\tproduct_site_launch_date\tmerchant_release_date\trestock_date\toptional_payment_type_exclusion\tdelivery_schedule_group_id\tsale_price\tsale_from_date\tsale_end_date\titem_package_quantity\tlist_price\tnumber_of_items\toffering_can_be_giftwrapped\toffering_can_be_gift_messaged\tmax_order_quantity\tis_discontinued_by_manufacturer\toffering_end_date\tproduct_tax_code\tmerchant_shipping_group_name\tis_expiration_dated_product\tdistribution_designation\toffering_start_date\tstandard_price_points_percent\tsale_price_points_percent';
 
-      // データをAmazonフォーマットに変換
-      const csvData = filteredProducts.map(product => {
+      // フィルタ済み商品とNG出品者の商品、NGワード商品を除外してデータをAmazonフォーマットに変換
+      const validProducts = filteredProducts.filter(product => {
+        // 既存のフィルタチェック
+        if (product.is_filtered) return false;
+        if (product.seller_code && ngSellerCodes.has(product.seller_code)) return false;
+        
+        // NGワードチェック
+        const ngCheck = checkForNGKeywords(product.title || '', product.description || '');
+        if (ngCheck.isNG) {
+          console.log(`CSV出力除外: 商品 "${product.title}" でNGワード検出: ${ngCheck.matchedKeywords.join(', ')}`);
+          return false;
+        }
+        
+        return true;
+      });
+      const csvData = validProducts.map(product => {
         // コンディションのマッピング
         const conditionMapping: Record<string, string> = {
           '新品、未使用': 'New',
@@ -251,9 +379,9 @@ export default function ProductsPage() {
         
         // 必須フィールドを設定
         amazonData[0] = 'Hobbies'; // feed_product_type
-        amazonData[1] = product.id || ''; // item_sku
+        amazonData[1] = sanitizeText(product.id || ''); // item_sku
         amazonData[2] = 'ノーブランド品'; // brand_name
-        amazonData[3] = `"${(product.amazon_title || product.title || '').replace(/"/g, '""')}"`; // item_name
+        amazonData[3] = sanitizeText(product.amazon_title || product.title || ''); // item_name
         amazonData[4] = ''; // external_product_id
         amazonData[5] = ''; // external_product_id_type
         amazonData[6] = 'ノーブランド品'; // manufacturer
@@ -275,37 +403,36 @@ export default function ProductsPage() {
         amazonData[24] = ''; // parent_sku
         amazonData[25] = ''; // relationship_type
         amazonData[26] = 'Update'; // update_delete
-        amazonData[27] = product.id || ''; // part_number
-        amazonData[28] = `"${(product.description || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`; // product_description
+        amazonData[27] = sanitizeText(product.id || ''); // part_number
+        amazonData[28] = sanitizeText(product.description || ''); // product_description
         // bullet_point1 (35)
-        amazonData[35] = `"${(product.amazon_title || product.title || '').replace(/"/g, '""')}"`;
+        amazonData[35] = sanitizeText(product.amazon_title || product.title || '');
         amazonData[41] = 'Years'; // mfg_minimum_unit_of_measure
         amazonData[80] = '15'; // mfg_minimum
         amazonData[165] = '10'; // fulfillment_latency
         amazonData[166] = condition; // condition_type
-        amazonData[167] = '全国送料無料。店舗でも販売しておりますので、在庫切れの場合はキャンセルさせていただく場合があります。セットものは別々に届く場合があります。お届けまでに１週間から１０日ほどかかる場合がございますので、ご了承願います。'; // condition_note
+        amazonData[167] = '全国送料無料。店舗でも販売しておりますので、在庫切れの場合はキャンセルさせていただく場合があります。セットものは別々に届く場合があります。お届けまでに1週間から10日ほどかかる場合がございますので、ご了承願います。'; // condition_note
         amazonData[191] = '0'; // sale_price_points_percent
         
         return amazonData;
       });
 
-      // CSVコンテンツを作成
-      const csvContent = [
+      // TSVコンテンツを作成(タブ区切り)
+      const tsvContent = [
         templateMetadata,
         japaneseHeaders,
         englishHeaders,
-        ...csvData.map(row => row.join(','))
+        ...csvData.map(row => row.join('\t'))
       ].join('\n');
 
-      // BOMを追加してExcelでの文字化けを防ぐ
-      const bom = '\uFEFF';
-      const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+      // BOMなしでUTF-8で保存
+      const blob = new Blob([tsvContent], { type: 'text/plain;charset=utf-8;' });
 
-      // ファイルをダウンロード
+      // ファイルをダウンロード(.txt形式)
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '');
-      const filename = `Amazon_インベントリファイル_${timestamp}.csv`;
+      const filename = `Amazon_インベントリファイル_${timestamp}.txt`;
       
       link.setAttribute('href', url);
       link.setAttribute('download', filename);
@@ -314,8 +441,9 @@ export default function ProductsPage() {
       link.click();
       document.body.removeChild(link);
       
-      // CSV出力後、出力した商品のcsv_exportedフラグを更新
-      const productIds = filteredProducts.map(p => p.id);
+      // CSV出力後、出力した商品のcsv_exportedフラグを更新（フィルタ済み商品は除外）
+      const productIds = validProducts.map(p => p.id);
+      const filteredCount = filteredProducts.length - validProducts.length;
       const { error } = await supabase
         .from(TABLE_NAMES.PRODUCTS)
         .update({ 
@@ -325,15 +453,34 @@ export default function ProductsPage() {
         .in('id', productIds);
 
       if (error) {
-        console.error('CSV出力ステータス更新エラー:', error);
-        alert('CSVファイルは出力されましたが、ステータスの更新に失敗しました');
+        console.error('TSV出力ステータス更新エラー:', error);
+        alert('TSVファイルは出力されましたが、ステータスの更新に失敗しました');
       } else {
         // 成功した場合は商品リストを再読み込み
         await loadProducts();
+        const ngSellerCount = filteredProducts.filter(p => 
+          !p.is_filtered && p.seller_code && ngSellerCodes.has(p.seller_code)
+        ).length;
+        const ngKeywordCount = filteredProducts.filter(p => {
+          if (p.is_filtered) return false;
+          if (p.seller_code && ngSellerCodes.has(p.seller_code)) return false;
+          const ngCheck = checkForNGKeywords(p.title || '', p.description || '');
+          return ngCheck.isNG;
+        }).length;
+        const totalExcluded = filteredCount + ngSellerCount + ngKeywordCount;
+        
+        let message = `Amazonインベントリファイル(TSV)を出力しました: ${filename}\n\n有効商品: ${validProducts.length}件`;
+        if (totalExcluded > 0) {
+          message += `\n除外商品: ${totalExcluded}件`;
+          if (filteredCount > 0) message += `\n  - フィルタ済み: ${filteredCount}件`;
+          if (ngSellerCount > 0) message += `\n  - NG出品者: ${ngSellerCount}件`;
+          if (ngKeywordCount > 0) message += `\n  - NGワード: ${ngKeywordCount}件`;
+        }
+        alert(message);
       }
     } catch (error) {
-      console.error('CSV出力エラー:', error);
-      alert('CSV出力に失敗しました');
+      console.error('TSV出力エラー:', error);
+      alert('TSV出力に失敗しました');
     }
   };
 
@@ -366,6 +513,7 @@ export default function ProductsPage() {
               <option value="all">すべて</option>
               <option value="valid">有効商品</option>
               <option value="filtered">フィルタ済み</option>
+              <option value="ng_sellers">NG出品者の商品</option>
               <option value="amazon_ready">Amazon準備完了</option>
               <option value="csv_exported">CSV反映済み</option>
               <option value="csv_not_exported">CSV未反映</option>
@@ -376,11 +524,21 @@ export default function ProductsPage() {
           <div className="flex flex-col sm:flex-row gap-3">
             <button 
               onClick={() => markAsCSVExported(Array.from(selectedProducts))}
-              disabled={selectedProducts.size === 0}
+              disabled={selectedProducts.size === 0 || hasFilteredProducts}
               className="flex items-center justify-center px-6 py-4 bg-green-600 text-white text-base font-medium rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
+              title={hasFilteredProducts ? "フィルタ済み商品、NG出品者、NGワード商品は反映できません" : ""}
             >
               <FileCheck className="w-5 h-5 mr-2" />
               CSV反映 ({selectedProducts.size})
+              {hasFilteredProducts && <span className="ml-2 text-xs">⚠️</span>}
+            </button>
+            <button 
+              onClick={bulkDeleteProducts}
+              disabled={selectedProducts.size === 0}
+              className="flex items-center justify-center px-6 py-4 bg-red-600 text-white text-base font-medium rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
+            >
+              <X className="w-5 h-5 mr-2" />
+              一括削除 ({selectedProducts.size})
             </button>
             <Link
               href="/csv-export"
@@ -394,7 +552,7 @@ export default function ProductsPage() {
               className="flex items-center justify-center px-6 py-4 bg-blue-600 text-white text-base font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
             >
               <Download className="w-5 h-5 mr-2" />
-              CSV出力
+              Amazon TSV出力
             </button>
           </div>
         </div>
@@ -404,7 +562,7 @@ export default function ProductsPage() {
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {loading ? (
           <div className="text-center py-12 text-gray-500">読み込み中...</div>
-        ) : filteredProducts.length === 0 ? (
+        ) : displayProducts.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
             {searchTerm ? '検索条件に一致する商品がありません' : '商品がありません'}
           </div>
@@ -448,7 +606,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredProducts.map((product) => {
+                {displayProducts.map((product) => {
                   const profit = (product.listing_price || 0) - (product.price || 0);
                   const profitRate = product.price ? ((profit / product.price) * 100) : 0;
                   const isEditing = editingId === product.id;
@@ -525,8 +683,20 @@ export default function ProductsPage() {
                             className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         ) : (
-                          <div className="text-sm text-gray-500">
-                            {product.seller_name || '不明'}
+                          <div className="text-sm">
+                            <div className="text-gray-900 font-medium">
+                              {product.seller_name || '不明'}
+                            </div>
+                            {product.seller_code && (
+                              <div className="text-xs text-gray-500 mt-1">
+                                ID: {product.seller_code}
+                                {ngSellerCodes.has(product.seller_code) && (
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                                    NG出品者
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
@@ -688,10 +858,11 @@ export default function ProductsPage() {
                               </button>
                               <button
                                 onClick={() => deleteProduct(product.id)}
-                                className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+                                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md touch-manipulation"
                                 title="削除"
                               >
-                                <Trash2 className="w-5 h-5" />
+                                <Trash2 className="w-4 h-4 mr-1 inline" />
+                                削除
                               </button>
                             </>
                           )}
