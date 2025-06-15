@@ -17,18 +17,27 @@ export default function ProductsPage() {
   const [ngKeywords, setNgKeywords] = useState<string[]>([]);
 
   useEffect(() => {
-    loadProducts();
     loadNGKeywords();
+  }, []);
+
+  useEffect(() => {
+    loadProducts();
   }, [filter, sortOrder]);
 
   async function loadNGKeywords() {
     try {
+      console.log('🔄 NGキーワード読み込み開始...');
       const { data, error } = await supabase
         .from('ng_keywords')
         .select('keyword');
 
       if (error) throw error;
-      setNgKeywords(data?.map(item => item.keyword.toLowerCase()) || []);
+      
+      const keywords = data?.map(item => item.keyword) || [];
+      setNgKeywords(keywords);
+      
+      console.log('✅ NGキーワード読み込み完了:', keywords.length, '件');
+      console.log('🔍 Budweiser確認:', keywords.filter(k => k.toLowerCase().includes('budweiser')));
     } catch (error) {
       console.error('NGキーワード取得エラー:', error);
     }
@@ -39,16 +48,31 @@ export default function ProductsPage() {
     const searchText = `${title || ''} ${description || ''}`.toLowerCase();
     const matchedKeywords: string[] = [];
 
+    // デバッグ: Budweiserを含む商品の場合はログ出力
+    if (searchText.includes('budweiser')) {
+      console.log('🔍 Budweiser商品を検出:', { title, description, searchText });
+      console.log('📋 NGキーワードリスト数:', ngKeywords.length);
+      console.log('🔑 NGキーワードにbudweiserが含まれているか:', ngKeywords.includes('budweiser'));
+    }
+
     for (const keyword of ngKeywords) {
-      if (searchText.includes(keyword)) {
+      const keywordLower = keyword.toLowerCase();
+      if (searchText.includes(keywordLower)) {
         matchedKeywords.push(keyword);
       }
     }
 
-    return {
+    const result = {
       isNG: matchedKeywords.length > 0,
       matchedKeywords
     };
+
+    // デバッグ: Budweiserの結果をログ出力
+    if (searchText.includes('budweiser')) {
+      console.log('🚫 Budweiser NGチェック結果:', result);
+    }
+
+    return result;
   }
 
   async function loadProducts() {

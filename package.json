@@ -1,6 +1,6 @@
 {
   "name": "flea-market-research-admin",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "フリマサイトリサーチツール管理画面（Amazon出品対応）",
   "private": true,
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "version:update": "node scripts/update-version.js"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.8.0",

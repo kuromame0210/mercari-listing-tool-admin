@@ -1,6 +1,10 @@
 'use client';
 
-import { Bell, Search, User } from 'lucide-react';
+import { Bell, Search, User, GitBranch } from 'lucide-react';
+
+// バージョン情報
+const VERSION = process.env.NEXT_PUBLIC_VERSION || '2.0.0';
+const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME || new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 export default function Header() {
   return (
@@ -23,6 +27,17 @@ export default function Header() {
           </div>
           
           <div className="flex items-center space-x-4">
+            {/* バージョン情報 */}
+            <div className="flex items-center space-x-2 px-3 py-1 bg-gray-50 rounded-lg border">
+              <GitBranch className="h-4 w-4 text-gray-500" />
+              <div className="text-xs">
+                <span className="font-medium text-gray-700">v{VERSION}</span>
+                <div className="text-gray-500" title={`ビルド時間: ${BUILD_TIME}`}>
+                  {BUILD_TIME.split(' ')[0]}
+                </div>
+              </div>
+            </div>
+            
             <button className="p-2 text-gray-400 hover:text-gray-500 transition-colors">
               <Bell className="h-5 w-5" />
             </button>
